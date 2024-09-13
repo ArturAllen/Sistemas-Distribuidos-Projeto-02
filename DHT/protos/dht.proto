@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+service DHT {
+  rpc Join (JoinRequest) returns (JoinResponse);
+  rpc InformNewSucc (InformSuccRequest) returns (InformSuccResponse);
+  rpc Store (StoreRequest) returns (StoreResponse);
+  rpc Retrieve (RetrieveRequest) returns (RetrieveResponse);
+  rpc Leave (LeaveRequest) returns (LeaveResponse);
+  rpc Test (TestRequest) returns (TestResponse);
+}
+
+message JoinRequest {
+  uint64 node_id = 1;
+  string ip = 2;
+  int32 port = 3;
+}
+
+message JoinResponse {
+  uint64 node_id = 1;
+  string ip = 2;
+  int32 port = 3;
+}
+
+message InformSuccRequest {
+  uint64 node_id = 1;
+  string ip = 2;
+  int32 port = 3;
+}
+
+message InformSuccResponse {
+  bool success = 1;
+}
+
+message StoreRequest {
+  int64 key = 1;
+  string value = 2;
+}
+
+message StoreResponse {
+  bool success = 1;
+}
+
+message RetrieveRequest {
+  string key = 1;
+}
+
+message RetrieveResponse {
+  bytes value = 1;
+}
+
+message LeaveRequest {
+  uint64 node_id = 1;
+  string ip = 2;
+  int32 port = 3;
+}
+
+message LeaveResponse {
+  bool success = 1;
+}
+
+message TestRequest {
+    string content = 1;
+}
+
+message TestResponse {
+    bool success = 1;
+}
+
+//python -m grpc_tools.protoc -I ./protos --python_out=./src --grpc_python_out=./src ./protos/dht.proto
+
+
