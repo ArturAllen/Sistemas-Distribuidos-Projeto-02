@@ -310,6 +310,23 @@ def short_hash(value):
     value has to be byte array.
     """
     return int.from_bytes(hashlib.sha256(value).digest()[:8], 'little')
+    
+def should_store_locally(current_node_id, predecessor_id, successor_id, data_id):
+    """
+    Determines if the data with the given ID should be stored locally or routed to the successor.
+    
+    :param current_node_id: ID of the current node
+    :param predecessor_id: ID of the predecessor node
+    :param successor_id: ID of the successor node
+    :param data_id: ID of the data to store
+    :return: True if the data should be stored locally, False if it should be routed to the successor
+    """
+    if predecessor_id < current_node_id:
+        # No wrap-around case
+        return predecessor_id < data_id <= current_node_id
+    else:
+        # Wrap-around case
+        return data_id > predecessor_id or data_id <= current_node_id
 
 #if __name__ == '__main__':
 def init():
