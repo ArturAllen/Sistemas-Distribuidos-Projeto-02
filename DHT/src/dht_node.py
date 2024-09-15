@@ -20,6 +20,7 @@ node_curr = None
 log = []
 
 data = {}
+temp = {}
 
 server = None
 
@@ -47,14 +48,9 @@ class DHTNode(dht_pb2_grpc.DHTServicer):
             node_pred = {'id': request.node_id, 'ip': request.ip, 'port': request.port}
             return dht_pb2.JoinResponse(node_id=node_curr['id'], ip=node_curr['ip'], port=node_curr['port'])
 
-        # with grpc.insecure_channel(f'{node_pred['ip']}:{node_pred['port']}') as channel:
-        #     stub = dht_pb2_grpc.DHTStub(channel)
-        #     _ = stub.InformNewSucc(dht_pb2.InformSuccRequest(node_id=request.node_id, ip=request.ip, port=request.port))
-        #     # if response.success:
-        #     #     print('Message successfully delivered')
-
         former_pred = node_pred.copy()
         node_pred = {'id': request.node_id, 'ip': request.ip, 'port': request.port}
+        queue.append('transfer')
         return dht_pb2.JoinResponse(node_id=former_pred['id'], ip=former_pred['ip'], port=former_pred['port'])
 
     def InformNewSucc(self, request, context):
@@ -77,12 +73,21 @@ class DHTNode(dht_pb2_grpc.DHTServicer):
 
     def Retrieve(self, request, context):
         # Buscar o valor da chave solicitada
-        key = request.key
-        value = self.data.get(key, None)
-        if value:
-            return dht_pb2.RetrieveResponse(value=value)
+        queue.append(f'retrieve:{request.key}:{request.node_id}:{request.ip}:{request.port}')
+        return dht_pb2.RetrieveResponse(success=True)
+        # value = self.data.get(key, None)
+        # if value:
+        #     return dht_pb2.RetrieveResponse(value=value)
+        # else:
+        #     return dht_pb2.RetrieveResponse(value=b"")
+
+    def Found(self, request, context):
+        if request.found:
+            temp[request.key] = request.value
         else:
-            return dht_pb2.RetrieveResponse(value=b"")
+            log.append(f'Key {request.key} not found')
+
+        return dht_pb2.FoundResponse()
 
     def Leave(self, request, context):
         global node_pred
@@ -95,6 +100,10 @@ class DHTNode(dht_pb2_grpc.DHTServicer):
         
         return dht_pb2.LeaveResponse(success=True)
     
+    def Transfer(self, request, context):
+        data[request.key] = request.value
+        return dht_pb2.TransferResponse()
+
     def Test(self, request, context):
         message = request.content
         buffer.append(message)
@@ -108,6 +117,7 @@ def serve(id,ip,port):
     server.start()
     server.wait_for_termination()
 
+# Processador de fila
 def job():
     global node_pred, node_succ
     while True:
@@ -132,7 +142,7 @@ def job():
                     key = int(sep[1])
                     value = sep[2]
 
-                    if (node_curr['id'] == key) or (node_curr['id'] > key and node_succ['id'] > node_curr['id']) or (key > node_curr['id'] and node_pred['id'] > node_curr['id']):
+                    if should_store_locally(node_curr['id'], node_pred['id'], node_succ['id'], key):
                         data[key] = value
                         log.append('Stored key value pair.')
 
@@ -142,6 +152,50 @@ def job():
                             response = stub.Store(dht_pb2.StoreRequest(key=key, value=value))
                             if response.success:
                                 log.append('Store request routed.')
+
+                case 'retrieve':
+                    key = int(sep[1])
+                    id = int(sep[2])
+                    ip = sep[3]
+                    port = int(sep[4])
+
+                    log.append(f'Retrieve processing {key} {id} {ip} {port}')
+
+                    # TODO: Handle NULL
+                    if should_store_locally(node_curr['id'],node_pred['id'],node_curr['id'],key):
+                        if key in data.keys():
+                            if node_curr['id'] == id:
+                                temp[key] = data[key]
+                            else:
+                                with grpc.insecure_channel(f'{ip}:{port}') as channel:
+                                    stub = dht_pb2_grpc.DHTStub(channel)
+                                    log.append(f'Returning value {data[key]} with key {key} to node {id}')
+                                    response = stub.Found(dht_pb2.FoundRequest(found=True, key=key, value=data[key]))
+                        # Valor não está na DHT
+                        else:
+                            if node_curr['id'] == id:
+                                log.append(f'Key {key} not found')
+                            else:
+                                with grpc.insecure_channel(f'{ip}:{port}') as channel:
+                                    stub = dht_pb2_grpc.DHTStub(channel)
+                                    response = stub.Found(dht_pb2.FoundRequest(found=False, key=key, value=''))
+                    else:
+                        log.append(f'Routing retrieve request {key} to successor {node_succ}')
+                        try:
+                            with grpc.insecure_channel(f'{node_succ['ip']}:{node_succ['port']}') as channel:
+                                stub = dht_pb2_grpc.DHTStub(channel)
+                                response = stub.Retrieve(dht_pb2.RetrieveRequest(key=key, node_id=id, ip=ip, port=port))
+                        except:
+                            log.append('Something went terribly wrong!')
+                
+                case 'transfer':
+                    items_to_transfer = [(k,v) for (k,v) in data.items() if k <= node_pred['id']]
+
+                    with grpc.insecure_channel(f'{node_pred['ip']}:{node_pred['port']}') as channel:
+                        stub = dht_pb2_grpc.DHTStub(channel)
+                        for (k,v) in items_to_transfer:
+                            del data[k]
+                            response = stub.Transfer(dht_pb2.TransferRequest(key=k, value=v))
 
                 case 'join':
                     find_neighbors()
@@ -162,7 +216,11 @@ def job():
                             stub = dht_pb2_grpc.DHTStub(channel)
                             response = stub.Leave(
                                 dht_pb2.LeaveRequest(node_id=node_pred['id'], ip=node_pred['ip'], port=node_pred['port']))
-                    
+                            #TODO: TRANSFERIR DADOS PARA SUCESSOR
+
+                            for (k, v) in data.items():
+                                response = stub.Transfer(dht_pb2.TransferRequest(key=k, value=v))
+
                     if node_pred != None:
                         # Informar novo sucessor ao predecessor
                         with grpc.insecure_channel(f'{node_pred['ip']}:{node_pred['port']}') as channel:
@@ -202,6 +260,10 @@ def client():
                 value = input('Value: ')
                 queue.append(f'store:{short_hash(raw_key.encode())}:{value}')
 
+            case 'retrieve':
+                raw_key = input('Key: ')
+                queue.append(f'retrieve:{short_hash(raw_key.encode())}:{node_curr['id']}:{node_curr['ip']}:{node_curr['port']}')
+
             case 'view':
                 if buffer == []:
                     print('No messages')
@@ -211,6 +273,9 @@ def client():
                     print(message)
 
                 print(data)
+
+            case 'temp':
+                print(temp)
 
             case 'stats':
                 print(f'Current node: {node_curr}')

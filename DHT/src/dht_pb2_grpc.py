@@ -5,10 +5,8 @@ import warnings
 
 import dht_pb2 as dht__pb2
 
-GRPC_GENERATED_VERSION = '1.65.4'
+GRPC_GENERATED_VERSION = '1.66.1'
 GRPC_VERSION = grpc.__version__
-EXPECTED_ERROR_RELEASE = '1.66.0'
-SCHEDULED_RELEASE_DATE = 'August 6, 2024'
 _version_not_supported = False
 
 try:
@@ -18,15 +16,12 @@ except ImportError:
     _version_not_supported = True
 
 if _version_not_supported:
-    warnings.warn(
+    raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
         + f' but the generated code in dht_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
-        + f' This warning will become an error in {EXPECTED_ERROR_RELEASE},'
-        + f' scheduled for release on {SCHEDULED_RELEASE_DATE}.',
-        RuntimeWarning
     )
 
 
@@ -49,6 +44,11 @@ class DHTStub(object):
                 request_serializer=dht__pb2.InformSuccRequest.SerializeToString,
                 response_deserializer=dht__pb2.InformSuccResponse.FromString,
                 _registered_method=True)
+        self.Found = channel.unary_unary(
+                '/DHT/Found',
+                request_serializer=dht__pb2.FoundRequest.SerializeToString,
+                response_deserializer=dht__pb2.FoundRequest.FromString,
+                _registered_method=True)
         self.Store = channel.unary_unary(
                 '/DHT/Store',
                 request_serializer=dht__pb2.StoreRequest.SerializeToString,
@@ -63,6 +63,11 @@ class DHTStub(object):
                 '/DHT/Leave',
                 request_serializer=dht__pb2.LeaveRequest.SerializeToString,
                 response_deserializer=dht__pb2.LeaveResponse.FromString,
+                _registered_method=True)
+        self.Transfer = channel.unary_unary(
+                '/DHT/Transfer',
+                request_serializer=dht__pb2.TransferRequest.SerializeToString,
+                response_deserializer=dht__pb2.TransferResponse.FromString,
                 _registered_method=True)
         self.Test = channel.unary_unary(
                 '/DHT/Test',
@@ -86,6 +91,12 @@ class DHTServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Found(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Store(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -99,6 +110,12 @@ class DHTServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def Leave(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Transfer(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -123,6 +140,11 @@ def add_DHTServicer_to_server(servicer, server):
                     request_deserializer=dht__pb2.InformSuccRequest.FromString,
                     response_serializer=dht__pb2.InformSuccResponse.SerializeToString,
             ),
+            'Found': grpc.unary_unary_rpc_method_handler(
+                    servicer.Found,
+                    request_deserializer=dht__pb2.FoundRequest.FromString,
+                    response_serializer=dht__pb2.FoundRequest.SerializeToString,
+            ),
             'Store': grpc.unary_unary_rpc_method_handler(
                     servicer.Store,
                     request_deserializer=dht__pb2.StoreRequest.FromString,
@@ -137,6 +159,11 @@ def add_DHTServicer_to_server(servicer, server):
                     servicer.Leave,
                     request_deserializer=dht__pb2.LeaveRequest.FromString,
                     response_serializer=dht__pb2.LeaveResponse.SerializeToString,
+            ),
+            'Transfer': grpc.unary_unary_rpc_method_handler(
+                    servicer.Transfer,
+                    request_deserializer=dht__pb2.TransferRequest.FromString,
+                    response_serializer=dht__pb2.TransferResponse.SerializeToString,
             ),
             'Test': grpc.unary_unary_rpc_method_handler(
                     servicer.Test,
@@ -198,6 +225,33 @@ class DHT(object):
             '/DHT/InformNewSucc',
             dht__pb2.InformSuccRequest.SerializeToString,
             dht__pb2.InformSuccResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Found(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/DHT/Found',
+            dht__pb2.FoundRequest.SerializeToString,
+            dht__pb2.FoundRequest.FromString,
             options,
             channel_credentials,
             insecure,
@@ -279,6 +333,33 @@ class DHT(object):
             '/DHT/Leave',
             dht__pb2.LeaveRequest.SerializeToString,
             dht__pb2.LeaveResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Transfer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/DHT/Transfer',
+            dht__pb2.TransferRequest.SerializeToString,
+            dht__pb2.TransferResponse.FromString,
             options,
             channel_credentials,
             insecure,

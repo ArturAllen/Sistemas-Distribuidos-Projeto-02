@@ -3,9 +3,11 @@ syntax = "proto3";
 service DHT {
   rpc Join (JoinRequest) returns (JoinResponse);
   rpc InformNewSucc (InformSuccRequest) returns (InformSuccResponse);
+  rpc Found (FoundRequest) returns (FoundRequest);
   rpc Store (StoreRequest) returns (StoreResponse);
   rpc Retrieve (RetrieveRequest) returns (RetrieveResponse);
   rpc Leave (LeaveRequest) returns (LeaveResponse);
+  rpc Transfer (TransferRequest) returns (TransferResponse);
   rpc Test (TestRequest) returns (TestResponse);
 }
 
@@ -32,7 +34,7 @@ message InformSuccResponse {
 }
 
 message StoreRequest {
-  int64 key = 1;
+  uint64 key = 1;
   string value = 2;
 }
 
@@ -41,11 +43,24 @@ message StoreResponse {
 }
 
 message RetrieveRequest {
-  string key = 1;
+  uint64 key = 1;
+  uint64 node_id = 2;
+  string ip = 3;
+  int32 port = 4;
 }
 
 message RetrieveResponse {
-  bytes value = 1;
+  bool success = 1;
+}
+
+message FoundRequest {
+  bool found = 1;
+  uint64 key = 2;
+  string value = 3;
+}
+
+message FoundResponse{
+
 }
 
 message LeaveRequest {
@@ -56,6 +71,15 @@ message LeaveRequest {
 
 message LeaveResponse {
   bool success = 1;
+}
+
+message TransferRequest {
+  uint64 key = 1;
+  string value = 2;
+}
+
+message TransferResponse {
+
 }
 
 message TestRequest {
