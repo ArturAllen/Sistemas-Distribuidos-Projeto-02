@@ -1,5 +1,7 @@
 import hashlib
+import cv2
 import grpc
+import numpy as np
 from concurrent import futures
 
 import grpc._channel
@@ -13,18 +15,23 @@ import secrets
 
 peers_file = 'peers.txt'
 
+# Guarda mensagens recebidas de outros nós da DHT
 buffer = []
+
 node_pred = None
 node_succ = None
 node_curr = None
+
 log = []
 
+# Guarda pares chaves valor da DHT
 data = {}
-temp = {}
 
 server = None
 
-# A Fila guardará ações a serem executadas em decorrência de uma requisição de outro nó
+busy = False
+
+# A Fila guardará ações a serem executadas em decorrência de uma requisição de outro nó ou de ação do usuário
 queue = []
 
 class DHTNode(dht_pb2_grpc.DHTServicer):
@@ -38,10 +45,6 @@ class DHTNode(dht_pb2_grpc.DHTServicer):
 
     def Join(self, request, context):
         global node_pred, node_succ, node_curr
-        # Lógica para o nó se juntar à rede
-        # Atualizar predecessor e sucessor
-        # log.append('Received join request')
-        log.append(f'Join request received by node with id {request.node_id}')
         
         if node_succ == None and node_pred == None:
             node_succ = {'id': request.node_id, 'ip': request.ip, 'port': request.port}
@@ -55,8 +58,6 @@ class DHTNode(dht_pb2_grpc.DHTServicer):
 
     def InformNewSucc(self, request, context):
         global node_succ
-        log.append(f'New Succ informed: {request.node_id}')
-    
         if request.node_id == node_curr['id']:
             node_succ = None
         else:
@@ -65,27 +66,28 @@ class DHTNode(dht_pb2_grpc.DHTServicer):
         return dht_pb2.InformSuccResponse(success=True)
 
     def Store(self, request, context):
-        # Armazenar o valor no nó correto
         key = request.key
         value = request.value
-        queue.append(f'store:{key}:{value}')
+        queue.append(f'store')
+        queue.append(f'{key}')
+        queue.append(value)
         return dht_pb2.StoreResponse(success=True)
 
     def Retrieve(self, request, context):
         # Buscar o valor da chave solicitada
         queue.append(f'retrieve:{request.key}:{request.node_id}:{request.ip}:{request.port}')
         return dht_pb2.RetrieveResponse(success=True)
-        # value = self.data.get(key, None)
-        # if value:
-        #     return dht_pb2.RetrieveResponse(value=value)
-        # else:
-        #     return dht_pb2.RetrieveResponse(value=b"")
 
     def Found(self, request, context):
         if request.found:
-            temp[request.key] = request.value
+            buffer.append(f'found')
+            buffer.append(f'1')
+            buffer.append(f'{request.key}')
+            buffer.append(request.value)
         else:
-            log.append(f'Key {request.key} not found')
+            buffer.append(f'found')
+            buffer.append(f'0')
+            buffer.append(f'{request.key}')
 
         return dht_pb2.FoundResponse()
 
@@ -111,15 +113,14 @@ class DHTNode(dht_pb2_grpc.DHTServicer):
 
 def serve(id,ip,port):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    # dht_pb2_grpc.add_DHTServicer_to_server(DHTNode(id, "127.0.0.1", port), server)
     dht_pb2_grpc.add_DHTServicer_to_server(DHTNode(id, ip, port), server)
     server.add_insecure_port(f'[::]:{port}')
     server.start()
     server.wait_for_termination()
 
 # Processador de fila
-def job():
-    global node_pred, node_succ
+def queue_processor():
+    global node_pred, node_succ, busy
     while True:
         if queue != []:
             task = queue.pop(0)
@@ -139,17 +140,21 @@ def job():
                             log.append('Message successfully delivered')
 
                 case 'store':
-                    key = int(sep[1])
-                    value = sep[2]
+                    key = int(queue.pop(0))
+                    img_bytes = queue.pop(0)
+                    log.append('Stored key value pair.')
+                    
+                    if node_succ == None or node_pred == None:
+                        data[key] = img_bytes
 
-                    if should_store_locally(node_curr['id'], node_pred['id'], node_succ['id'], key):
-                        data[key] = value
+                    elif should_store_locally(node_curr['id'], node_pred['id'], node_succ['id'], key):
+                        data[key] = img_bytes
                         log.append('Stored key value pair.')
 
                     else:
                         with grpc.insecure_channel(f'{node_succ['ip']}:{node_succ['port']}') as channel:
                             stub = dht_pb2_grpc.DHTStub(channel)
-                            response = stub.Store(dht_pb2.StoreRequest(key=key, value=value))
+                            response = stub.Store(dht_pb2.StoreRequest(key=key, value=img_bytes))
                             if response.success:
                                 log.append('Store request routed.')
 
@@ -159,13 +164,27 @@ def job():
                     ip = sep[3]
                     port = int(sep[4])
 
-                    log.append(f'Retrieve processing {key} {id} {ip} {port}')
+                    # MELHORAR AQUI
+                    if node_pred == None or node_succ == None:
+                        if key in data.keys():
+                            buffer.append('found')
+                            buffer.append('1')
+                            buffer.append(f'{key}')
+                            buffer.append(data[key])
+                        else:
+                            buffer.append('found')
+                            buffer.append('0')
+                            buffer.append(f'{key}')
 
-                    # TODO: Handle NULL
-                    if should_store_locally(node_curr['id'],node_pred['id'],node_curr['id'],key):
+                    elif should_store_locally(node_curr['id'],node_pred['id'],node_succ['id'],key):
+                        # Procura o valor localmente
+                        log.append('Looking for value locally')
                         if key in data.keys():
                             if node_curr['id'] == id:
-                                temp[key] = data[key]
+                                buffer.append('found')
+                                buffer.append('1')
+                                buffer.append(f'{key}')
+                                buffer.append(data[key])
                             else:
                                 with grpc.insecure_channel(f'{ip}:{port}') as channel:
                                     stub = dht_pb2_grpc.DHTStub(channel)
@@ -174,20 +193,19 @@ def job():
                         # Valor não está na DHT
                         else:
                             if node_curr['id'] == id:
-                                log.append(f'Key {key} not found')
+                                buffer.append('found')
+                                buffer.append('0')
+                                buffer.append(f'{key}')
                             else:
                                 with grpc.insecure_channel(f'{ip}:{port}') as channel:
                                     stub = dht_pb2_grpc.DHTStub(channel)
-                                    response = stub.Found(dht_pb2.FoundRequest(found=False, key=key, value=''))
+                                    response = stub.Found(dht_pb2.FoundRequest(found=False, key=key, value=b''))
                     else:
-                        log.append(f'Routing retrieve request {key} to successor {node_succ}')
-                        try:
-                            with grpc.insecure_channel(f'{node_succ['ip']}:{node_succ['port']}') as channel:
-                                stub = dht_pb2_grpc.DHTStub(channel)
-                                response = stub.Retrieve(dht_pb2.RetrieveRequest(key=key, node_id=id, ip=ip, port=port))
-                        except:
-                            log.append('Something went terribly wrong!')
-                
+                        # Encaminha a requisição para o sucessor
+                        with grpc.insecure_channel(f'{node_succ['ip']}:{node_succ['port']}') as channel:
+                            stub = dht_pb2_grpc.DHTStub(channel)
+                            response = stub.Retrieve(dht_pb2.RetrieveRequest(key=key, node_id=id, ip=ip, port=port))
+                        
                 case 'transfer':
                     items_to_transfer = [(k,v) for (k,v) in data.items() if k <= node_pred['id']]
 
@@ -199,8 +217,11 @@ def job():
 
                 case 'join':
                     find_neighbors()
+                    buffer.append(f'Joined DHT with id {node_curr['id']}. Listening on port {node_curr['port']}.')
+                    # busy = False
                     # write_node_info()
 
+                # O novo nó a informa seu predecessor para atualizar o nó sucessor
                 case 'inform':
                     with grpc.insecure_channel(f'{node_pred['ip']}:{node_pred['port']}') as channel:
                         stub = dht_pb2_grpc.DHTStub(channel)
@@ -209,6 +230,7 @@ def job():
                         if response.success:
                             log.append('Predecessor node informed')
 
+                # O nó está saindo da DHT. Informar os vizinhos, transferir os pares, encerrar threads e servidor
                 case 'leave':
                     if node_succ != None:
                         # Informar saida ao sucessor
@@ -216,8 +238,8 @@ def job():
                             stub = dht_pb2_grpc.DHTStub(channel)
                             response = stub.Leave(
                                 dht_pb2.LeaveRequest(node_id=node_pred['id'], ip=node_pred['ip'], port=node_pred['port']))
-                            #TODO: TRANSFERIR DADOS PARA SUCESSOR
-
+                            
+                            # Transfere os pares deste nó ao sucessor
                             for (k, v) in data.items():
                                 response = stub.Transfer(dht_pb2.TransferRequest(key=k, value=v))
 
@@ -232,10 +254,39 @@ def job():
 
                     exit()
 
-
 def client():
-    global node_succ, node_pred
+    global node_succ, node_pred, busy
     while True:
+        if busy:
+            while buffer != []:
+                action = buffer.pop(0)
+                
+                if action == 'found':
+                    success = buffer.pop(0)
+
+                    if success == '1':
+                        key = buffer.pop(0)
+                        img_bytes = buffer.pop(0)
+
+                        nparr = np.frombuffer(img_bytes, np.uint8)
+
+                        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+                        cv2.imshow(f'{key}', img)
+                        cv2.waitKey(0)
+                        cv2.destroyAllWindows()
+
+                    else:
+                        key = buffer.pop(0)
+                        print(f'Key {key} not found')
+                else:
+                    print(action)
+                
+                busy = False
+
+            continue
+
+
         command = input('>>> ').lower().strip()
         match command:
             case 'leave':
@@ -257,14 +308,32 @@ def client():
 
             case 'store':
                 raw_key = input('Key: ')
-                value = input('Value: ')
-                queue.append(f'store:{short_hash(raw_key.encode())}:{value}')
+                path = input('Path: ')
+
+                img = cv2.imread(path)
+                _,encoded = cv2.imencode('.jpg', img)
+                img_bytes = encoded.tobytes()
+
+                queue.append(f'store')
+                queue.append(f'{short_hash(raw_key.encode())}')
+                queue.append(img_bytes)
 
             case 'retrieve':
                 raw_key = input('Key: ')
                 queue.append(f'retrieve:{short_hash(raw_key.encode())}:{node_curr['id']}:{node_curr['ip']}:{node_curr['port']}')
+                busy = True
 
-            case 'view':
+            # case 'open':
+            #     path = "C:\\Users\\artur\\OneDrive\\Documentos\\Projetos\\Python\\DHT\\imgs\\giraffe-6378717_640.jpg"
+
+            #     # Display the image in a window
+            #     cv2.imshow('Image', img)
+
+            #     # Wait for a key press and close the window
+            #     cv2.waitKey(0)
+            #     cv2.destroyAllWindows()
+
+            case 'messages':
                 if buffer == []:
                     print('No messages')
                 
@@ -272,12 +341,13 @@ def client():
                     message = buffer.pop(0)
                     print(message)
 
+            case 'cmd':
+                print(eval(input()))
+
+            case 'data':
                 print(data)
 
-            case 'temp':
-                print(temp)
-
-            case 'stats':
+            case 'neighbors':
                 print(f'Current node: {node_curr}')
                 print(f'Previous node: {node_pred}')
                 print(f'Next node: {node_succ}')
@@ -287,6 +357,7 @@ def client():
                     print(l)
 
 def find_neighbors():
+
     global node_pred, node_succ
     if not os.path.exists(peers_file):
         return 
@@ -309,7 +380,6 @@ def find_neighbors():
         ip = peer['ip']
         port = peer['port']
 
-        # print(f'Trying {id}:{ip}:{port}')
         with grpc.insecure_channel(f'{ip}:{port}') as channel:
             stub = dht_pb2_grpc.DHTStub(channel=channel)
             try:
@@ -330,7 +400,6 @@ def find_neighbors():
 
             except grpc._channel._InactiveRpcError:
                 log.append(f'Connection with {id}:{ip}:{port} failed.')
-                # Nó não respondeu. procurar o próximo
                 continue
 
     # Todos os nós do arquivo estão inativos
@@ -370,49 +439,35 @@ def write_node_info():
     with open(peers_file, 'a') as f:
         f.write(f"\n{node_curr['id']}:{node_curr['ip']}:{node_curr['port']}")
 
+# Calcula um hash de 64 bits de uma chave
 def short_hash(value):
-    """
-    value has to be byte array.
-    """
     return int.from_bytes(hashlib.sha256(value).digest()[:8], 'little')
     
 def should_store_locally(current_node_id, predecessor_id, successor_id, data_id):
-    """
-    Determines if the data with the given ID should be stored locally or routed to the successor.
-    
-    :param current_node_id: ID of the current node
-    :param predecessor_id: ID of the predecessor node
-    :param successor_id: ID of the successor node
-    :param data_id: ID of the data to store
-    :return: True if the data should be stored locally, False if it should be routed to the successor
-    """
     if predecessor_id < current_node_id:
-        # No wrap-around case
         return predecessor_id < data_id <= current_node_id
     else:
-        # Wrap-around case
         return data_id > predecessor_id or data_id <= current_node_id
 
 #if __name__ == '__main__':
 def init():
-    global node_pred, node_succ, node_curr, server
+    global node_pred, node_succ, node_curr, server, busy
     set_node_params()
 
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    # dht_pb2_grpc.add_DHTServicer_to_server(DHTNode(id, "127.0.0.1", port), server)
     dht_pb2_grpc.add_DHTServicer_to_server(DHTNode(node_curr['id'], node_curr['ip'], node_curr['port']), server)
     server.add_insecure_port(f'[::]:{node_curr['port']}')
     server.start()
 
-    job_thread = threading.Thread(target=job)
+    job_thread = threading.Thread(target=queue_processor)
     job_thread.start()
     
+    busy = True
     client_thread = threading.Thread(target=client)
     client_thread.start()
     
     queue.append('join')
 
     server.wait_for_termination()
-    # serve(node_curr['id'], node_curr['ip'], node_curr['port'])
 
 init()
